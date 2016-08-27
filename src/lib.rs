@@ -1,5 +1,6 @@
-extern crate tokio;
-extern crate tokio_ssl;
+extern crate tokio_proto;
+extern crate tokio_core;
+extern crate tokio_tls;
 extern crate futures;
 extern crate bytes;
 extern crate time;
@@ -14,11 +15,13 @@ pub use request::Request;
 pub use response::Response;
 pub use ssl::NewSslContext;
 
-use tokio::{server, Service, NewService};
-use tokio::io::Framed;
-use tokio::proto::pipeline;
-use tokio::reactor::Reactor;
-use tokio::util::future::Empty;
+use tokio_proto::{server, Service, NewService};
+use tokio_proto::io::Framed;
+use tokio_proto::proto::pipeline;
+
+use tokio_core::Receiver;
+use tokio_core::Loop;
+
 use futures::{Future, Map};
 use bytes::BlockBuf;
 use std::io;
@@ -50,7 +53,7 @@ impl Server {
     pub fn serve<T>(self, new_service: T)
         where T: NewService<Req = Request, Resp = Response, Error = io::Error> + Send + 'static
     {
-        let reactor = Reactor::default().unwrap();
+        let reactor = Loop::new().unwrap();
         let handle = reactor.handle();
         let addr = self.addr;
         let ssl = self.ssl;
@@ -96,12 +99,11 @@ struct HttpService<T> {
 }
 
 impl<T> Service for HttpService<T>
-    where T: Service<Req = Request, Resp = Response, Error = io::Error>,
-{
+    where T: std::marker::Send, {
     type Req = Request;
-    type Resp = pipeline::Message<Response, Empty<(), io::Error>>;
+    type Resp = pipeline::Message<Response, Receiver<()>>;
     type Error = io::Error;
-    type Fut = Map<T::Fut, fn(Response) -> pipeline::Message<Response, Empty<(), io::Error>>>;
+    type Fut = Box<Future<Item = Self::Resp, Error = io::Error>>;
 
     fn call(&self, req: Request) -> Self::Fut {
         self.inner.call(req).map(pipeline::Message::WithoutBody)
